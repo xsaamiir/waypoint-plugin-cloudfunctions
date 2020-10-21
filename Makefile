@@ -6,7 +6,7 @@ protos:
 	@echo ""
 	@echo "Building Protos"
 
-	protoc -I . --go_opt=paths=source_relative --go_out=. ./builder/output.proto ./registry/output.proto ./platform/output.proto ./release/output.proto
+	protoc -I . --go_opt=paths=source_relative --go_out=. ./platform/output.proto ./release/output.proto
 
 build:
 	@echo ""

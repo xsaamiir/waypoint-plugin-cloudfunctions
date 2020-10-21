@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/waypoint-plugin-sdk/terminal"
-
-	"github.com/sharkyze/waypoint-plugin-cloudfunctions/builder"
 )
 
 type RegistryConfig struct {
@@ -71,7 +69,7 @@ func (r *Registry) PushFunc() interface{} {
 // as an input parameter.
 // If an error is returned, Waypoint stops the execution flow and
 // returns an error to the user.
-func (r *Registry) push(ctx context.Context, ui terminal.UI, binary *builder.Binary) (*Artifact, error) {
+func (r *Registry) push(ctx context.Context, ui terminal.UI) (*Artifact, error) {
 	u := ui.Status()
 	defer u.Close()
 	u.Update("Pushing binary to registry")

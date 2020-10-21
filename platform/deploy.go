@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/waypoint-plugin-sdk/terminal"
-	"github.com/sharkyze/waypoint-plugin-cloudfunctions/registry"
 )
 
 type DeployConfig struct {
@@ -69,7 +68,7 @@ func (p *Platform) DeployFunc() interface{} {
 // as an input parameter.
 // If an error is returned, Waypoint stops the execution flow and
 // returns an error to the user.
-func (b *Platform) deploy(ctx context.Context, ui terminal.UI, artifact *registry.Artifact) (*Deployment, error) {
+func (b *Platform) deploy(ctx context.Context, ui terminal.UI) (*Deployment, error) {
 	u := ui.Status()
 	defer u.Close()
 	u.Update("Deploy application")
