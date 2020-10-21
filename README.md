@@ -14,7 +14,7 @@ cd waypoint-plugin-cloudfunctions
 make install
 ````
 
-# Google App Engine Authentication
+# Authentication
 Please follow the instructions in the [Google Cloud Run tutorial](https://learn.hashicorp.com/tutorials/waypoint/google-cloud-run?in=waypoint/deploy-google-cloud#authenticate-to-google-cloud).
 This plugin uses GCP Application Default Credentials (ADC) for authentication. More info [here](https://cloud.google.com/docs/authentication/production).
 
