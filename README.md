@@ -1,10 +1,9 @@
-# Waypoint Plugin Google App Engine
+# Waypoint Plugin Google Cloud Functions
 
-waypoint-plugin-cloudfunctions is a deploy (platform & release) plugin for [Waypoint](https://github.com/hashicorp/waypoint).
-It allows you to stage previously built zip artifcats to Google App Engine and then release the staged deployment and open it to general traffic.
-The plugin is only compatible with Google App Engine Standard Environment for the time being.
+waypoint-plugin-cloudfunctions is a deploy (registry, platform & release) plugin for [Waypoint](https://github.com/hashicorp/waypoint).
+It allows you to stage previously built zip artifcats to Google Cloud Functions and then release the staged deployment and open it to general traffic.
 
-**The plugin works but as expected for my use case but is still missing some features, please open an issue for any feedback, issues or missing features.**
+**This plugin is still work in progress, please open an issue for any feedback or issues.**
 
 # Install
 To install the plugin, run the following command:
