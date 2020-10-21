@@ -1,31 +1,55 @@
-# Waypoint Plugin Google Cloud Functions [**WIP**]
+# Waypoint Plugin Google App Engine
 
-This folder contains an example plugin structure which can be used when building your own plugins.
+waypoint-plugin-cloudfunctions is a deploy (platform & release) plugin for [Waypoint](https://github.com/hashicorp/waypoint).
+It allows you to stage previously built zip artifcats to Google App Engine and then release the staged deployment and open it to general traffic.
+The plugin is only compatible with Google App Engine Standard Environment for the time being.
 
-## Steps
+**The plugin works but as expected for my use case but is still missing some features, please open an issue for any feedback, issues or missing features.**
 
-1. To scaffold a new plugin use the `./clone.sh` script passing the destination folder and the Go package
-for your new plugin as parameters
+# Install
+To install the plugin, run the following command:
 
-```shell
-./clone.sh ../destination_folder github.com/myorg/mypackage
-```
+````bash
+git clone git@github.com:sharkyze/waypoint-plugin-cloudfunctions.git # or gh repo clone sharkyze/waypoint-plugin-cloudfunctions
+cd waypoint-plugin-cloudfunctions
+make install
+````
 
-2. You can then run the Makefile to compile the new plugin
+# Google App Engine Authentication
+Please follow the instructions in the [Google Cloud Run tutorial](https://learn.hashicorp.com/tutorials/waypoint/google-cloud-run?in=waypoint/deploy-google-cloud#authenticate-to-google-cloud).
+This plugin uses GCP Application Default Credentials (ADC) for authentication. More info [here](https://cloud.google.com/docs/authentication/production).
 
-```shell
-cd ../destination_folder
+# Configure
+```hcl
+project = "project-name"
 
-make
-```
+app "webapp" {
+  path = "./webapp"
+  
+  url {
+    auto_hostname = false
+  }
 
-```shell
-Build Protos
-protoc -I . --go_opt=plugins=grpc --go_out=../../../../ ./builder/output.proto
-protoc -I . --go_opt=plugins=grpc --go_out=../../../../ ./registry/output.proto
-protoc -I . --go_opt=plugins=grpc --go_out=../../../../ ./platform/output.proto
-protoc -I . --go_opt=plugins=grpc --go_out=../../../../ ./release/output.proto
+  build {
+    use "archive" {
+      sources = ["."] # Sources are relative to /path/to/project-name/webapp/
+      output_name = "function-source.zip"
+      overwrite_existing = true
+      ignore = [".git"]
+      collapse_top_level_folder = true
+    }
 
-Compile Plugin
-go build -o ./bin/waypoint-plugin-template ./main.go
+    registry {
+      use "cloudfunctions" {}
+    }
+
+    deploy {
+      use "cloudfunctions" {}
+    }
+    
+    release {
+      use "cloudfunctions" {}
+    }
+  }
+}
 ```
