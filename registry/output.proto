@@ -7,4 +7,6 @@ option go_package = "github.com/sharkyze/waypoint-plugin-archive/registry";
 
 message Artifact {
   string source = 1;
+  string project = 2;
+  string location = 3;
 }

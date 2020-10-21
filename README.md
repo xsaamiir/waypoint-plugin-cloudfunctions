@@ -30,16 +30,13 @@ app "webapp" {
   }
 
   build {
-    use "archive" {
-      sources = ["."] # Sources are relative to /path/to/project-name/webapp/
-      output_name = "function-source.zip"
-      overwrite_existing = true
-      ignore = [".git"]
-      collapse_top_level_folder = true
-    }
+    use "archive" {}
 
     registry {
-      use "cloudfunctions" {}
+      use "cloudfunctions" {
+        project = "project-id"
+        location = "europe-west1"
+      }
     }
 
     deploy {
