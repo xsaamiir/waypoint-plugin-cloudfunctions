@@ -15,7 +15,15 @@ app "helloworld" {
   }
 
   deploy {
-    use "cloudfunctions" {}
+    use "cloudfunctions" {
+      entry_point = "HelloHTTP"
+      description = "Deployed using Waypoint 🎉"
+      runtime = "go113"
+      max_instances = 1
+      available_memory_mb = 128
+      ingress_settings = "ALLOW_ALL"
+      trigger_http = true
+    }
   }
 
   release {

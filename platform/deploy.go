@@ -2,13 +2,117 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
+	"github.com/hashicorp/waypoint-plugin-sdk/component"
 	"github.com/hashicorp/waypoint-plugin-sdk/terminal"
+	"google.golang.org/api/cloudfunctions/v1"
+	"google.golang.org/api/googleapi"
+
+	"github.com/sharkyze/waypoint-plugin-cloudfunctions/registry"
 )
 
 type DeployConfig struct {
-	Region string "hcl:directory,optional"
+	// EnvironmentVariables that shall be available during function execution.
+	EnvironmentVariables map[string]string `hcl:"environment_variables,optional"`
+
+	// BuildEnvironmentVariables that shall be available during build time.
+	BuildEnvironmentVariables map[string]string `hcl:"build_environment_variables,optional"`
+
+	// MaxInstances sets the maximum number of instances for the function.
+	// A function execution that would exceed max-instances times out.
+	MaxInstances int64 `hcl:"max_instances,optional"`
+
+	// Runtime in which to run the function.
+	// Available runtimes:
+	// 	nodejs10: Node.js 10
+	// 	nodejs12: Node.js 12
+	// 	python37: Python 3.7
+	// 	python38: Python 3.8
+	// 	go111: Go 1.11
+	// 	go113: Go 1.13
+	// 	java11: Java 11
+	// 	nodejs6: Node.js 6 (deprecated)
+	// 	nodejs8: Node.js 8 (deprecated)
+	Runtime string `hcl:"runtime,optional"`
+
+	// Timeout is execution timeout. Execution is considered failed and can be terminated if the function is not
+	// completed at the end of the timeout period. Defaults to 60 seconds.
+	// A duration in seconds with up to nine fractional digits, terminated by 's'. Example: "3.5s".
+	Timeout string `hcl:"timeout,optional"`
+
+	// AvailableMemoryMB is the limit on the amount of memory the function can use.
+	// Allowed values are: 128MB, 256MB, 512MB, 1024MB, and 2048MB.
+	// By default, a new function is limited to 256MB of memory.
+	AvailableMemoryMB int64 `hcl:"available_memory_mb,optional"`
+
+	// EntryPoint is the name of the function (as defined in source code) that will be executed.
+	// Defaults to the resource name suffix, if not specified.
+	// For backward compatibility, if function with given name is not found, then the system will try to use function named "function".
+	// For Node.js this is name of a function exported by the module specified in source_location.
+	EntryPoint string `hcl:"entry_point,optional"`
+
+	// IngressSettings: The ingress settings for the function, controlling
+	// what traffic can reach it.
+	//
+	// Possible values:
+	//   "INGRESS_SETTINGS_UNSPECIFIED" - Unspecified.
+	//   "ALLOW_ALL" - Allow HTTP traffic from public and private sources.
+	//   "ALLOW_INTERNAL_ONLY" - Allow HTTP traffic from only private VPC
+	// sources.
+	//   "ALLOW_INTERNAL_AND_GCLB" - Allow HTTP traffic from private VPC
+	// sources and through GCLB.
+	IngressSettings string `hcl:"ingress_settings,optional"`
+
+	// Description is a user-provided description of a function.
+	Description string `hcl:"description,optional"`
+
+	// TriggerHTTP allows any HTTP request (of a supported type) to the
+	// endpoint to trigger function execution.
+	// Cannot be used with trigger_bucket and trigger_topic.
+	TriggerHTTP bool `hcl:"trigger_http"`
+
+	// Labels: Labels associated with this Cloud Function.
+	Labels map[string]string `hcl:"labels,optional"`
+
+	// Network: The VPC Network that this cloud function can connect to. It
+	// can be either the fully-qualified URI, or the short name of the
+	// network resource. If the short network name is used, the network must
+	// belong to the same project. Otherwise, it must belong to a project
+	// within the same organization. The format of this field is either
+	// `projects/{project}/global/networks/{network}` or `{network}`, where
+	// {project} is a project id where the network is defined, and {network}
+	// is the short name of the network. This field is mutually exclusive
+	// with `vpc_connector` and will be replaced by it. See [the VPC
+	// documentation](https://cloud.google.com/compute/docs/vpc) for more
+	// information on connecting Cloud projects.
+	Network string `hcl:"network,optional"`
+
+	// VpcConnector: The VPC Network Connector that this cloud function can
+	// connect to. It can be either the fully-qualified URI, or the short
+	// name of the network connector resource. The format of this field is
+	// `projects/*/locations/*/connectors/*` This field is mutually
+	// exclusive with `network` field and will eventually replace it. See
+	// [the VPC documentation](https://cloud.google.com/compute/docs/vpc)
+	// for more information on connecting Cloud projects.
+	VpcConnector string `hcl:"vpc_connector,optional"`
+
+	// VpcConnectorEgressSettings: The egress settings for the connector,
+	// controlling what traffic is diverted through it.
+	//
+	// Possible values:
+	//   "VPC_CONNECTOR_EGRESS_SETTINGS_UNSPECIFIED" - Unspecified.
+	//   "PRIVATE_RANGES_ONLY" - Use the VPC Access Connector only for
+	// private IP space from RFC1918.
+	//   "ALL_TRAFFIC" - Force the use of VPC Access Connector for all
+	// egress traffic from the function.
+	VpcConnectorEgressSettings string `hcl:"vpc_connector_egress_settings,optional"`
+
+	// Unauthenticated, if set to true, will allow unauthenticated access
+	// to your deployment. This defaults to false.
+	Unauthenticated *bool `hcl:"unauthenticated,optional"`
 }
 
 type Platform struct {
@@ -29,9 +133,7 @@ func (p *Platform) ConfigSet(config interface{}) error {
 	}
 
 	// validate the config
-	if c.Region == "" {
-		return fmt.Errorf("Region must be set to a valid directory")
-	}
+	_ = c
 
 	return nil
 }
@@ -68,10 +170,173 @@ func (p *Platform) DeployFunc() interface{} {
 // as an input parameter.
 // If an error is returned, Waypoint stops the execution flow and
 // returns an error to the user.
-func (b *Platform) deploy(ctx context.Context, ui terminal.UI) (*Deployment, error) {
-	u := ui.Status()
-	defer u.Close()
-	u.Update("Deploy application")
+func (p *Platform) deploy(
+	ctx context.Context,
+	source *component.Source,
+	ui terminal.UI,
+	artifact *registry.Artifact,
+) (*Deployment, error) {
+	st := ui.Status()
+	defer st.Close()
+
+	project := artifact.Project
+	location := artifact.Location
+	sourceApp := source.App
+	functionName := fmt.Sprintf("projects/%s/locations/%s/functions/%s", project, location, sourceApp)
+
+	st.Update("Deploying Google Cloud Function '" + functionName + "'")
+
+	cloudfunctionsService, err := cloudfunctions.NewService(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// We need to determine if we're creating or updating a function. To
+	// do this, we just query GCP directly.
+	create := false
+	getCall := cloudfunctionsService.Projects.Locations.Functions.Get(functionName).Context(ctx)
+
+	st.Update("Checking if function already exists " + functionName + "'")
+
+	var gerr *googleapi.Error
+	cf, err := getCall.Do()
+	if err != nil {
+		if errors.As(err, &gerr) && gerr.Code == 404 {
+			create = true
+		} else {
+			return nil, err
+		}
+	}
+
+	if create {
+		st.Update("Google Cloud Function does not exist, creating function")
+	} else {
+		st.Update("Google Cloud Function already exists, updating function")
+	}
+
+	var op *cloudfunctions.Operation
+
+	if create {
+		var httpsTrigger *cloudfunctions.HttpsTrigger
+		if p.config.TriggerHTTP {
+			httpsTrigger = &cloudfunctions.HttpsTrigger{}
+		}
+
+		cloudFuncReq := cloudfunctions.CloudFunction{
+			AvailableMemoryMb:          p.config.AvailableMemoryMB,
+			BuildEnvironmentVariables:  p.config.BuildEnvironmentVariables,
+			Description:                p.config.Description,
+			EntryPoint:                 p.config.EntryPoint,
+			EnvironmentVariables:       p.config.EnvironmentVariables,
+			EventTrigger:               nil,
+			HttpsTrigger:               httpsTrigger,
+			IngressSettings:            p.config.IngressSettings,
+			Labels:                     p.config.Labels,
+			MaxInstances:               p.config.MaxInstances,
+			Name:                       functionName,
+			Network:                    p.config.Network,
+			Runtime:                    p.config.Runtime,
+			ServiceAccountEmail:        "",
+			SourceArchiveUrl:           "",
+			SourceRepository:           nil,
+			SourceUploadUrl:            artifact.Source,
+			Timeout:                    p.config.Timeout,
+			VpcConnector:               p.config.VpcConnector,
+			VpcConnectorEgressSettings: p.config.VpcConnectorEgressSettings,
+		}
+
+		op, err = createFunction(ctx, cloudfunctionsService, project, location, &cloudFuncReq)
+		if err != nil {
+			st.Step(terminal.StatusError, fmt.Sprintf("%#v", *err.(*googleapi.Error)))
+			time.Sleep(15 * time.Second)
+			return nil, err
+		}
+	} else {
+		cf.SourceUploadUrl = artifact.Source
+		op, err = patchFunc(ctx, cloudfunctionsService, cf)
+		if err != nil {
+			st.Step(terminal.StatusError, fmt.Sprintf("Error updating function: %#v", *err.(*googleapi.Error)))
+			return nil, err
+		}
+	}
+
+	st.Step(terminal.StatusOK, "Google Cloud Function deployed")
+	st.Update("Building Function '" + op.Name + "'")
+
+	op, err = waitForOperation(ctx, cloudfunctionsService, op)
+	if err != nil {
+		st.Step(terminal.StatusError, "Error fetching build status")
+		return nil, err
+	}
+
+	if op.Error != nil {
+		st.Step(terminal.StatusError, "Build error")
+		return nil, errors.New(op.Error.Message)
+	}
+
+	st.Step(terminal.StatusOK, "Google Cloud Function deployed")
 
 	return &Deployment{}, nil
+}
+
+func createFunction(
+	ctx context.Context,
+	service *cloudfunctions.Service,
+	project, location string,
+	req *cloudfunctions.CloudFunction,
+) (*cloudfunctions.Operation, error) {
+	call := service.Projects.Locations.Functions.
+		Create(
+			fmt.Sprintf("projects/%s/locations/%s", project, location),
+			req,
+		).
+		Context(ctx)
+
+	op, err := call.Do()
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
+func patchFunc(
+	ctx context.Context,
+	service *cloudfunctions.Service,
+	req *cloudfunctions.CloudFunction,
+) (*cloudfunctions.Operation, error) {
+	patchCall := service.Projects.Locations.Functions.
+		Patch(req.Name, req).
+		Context(ctx).
+		UpdateMask("sourceUploadUrl")
+
+	op, err := patchCall.Do()
+	if err != nil {
+		return nil, err
+	}
+
+	return op, nil
+}
+
+// waitForOperation keeps polling long the operation until it finishes either
+// successfully or with an error.
+func waitForOperation(
+	ctx context.Context,
+	service *cloudfunctions.Service,
+	op *cloudfunctions.Operation,
+) (*cloudfunctions.Operation, error) {
+	var err error
+
+	for !op.Done {
+		opCall := service.Operations.Get(op.Name)
+		opCall = opCall.Context(ctx)
+		op, err = opCall.Do()
+		if err != nil {
+			return nil, err
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	return op, nil
 }
