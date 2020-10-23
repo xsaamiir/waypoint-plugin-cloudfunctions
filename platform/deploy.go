@@ -58,7 +58,6 @@ type DeployConfig struct {
 
 	// IngressSettings: The ingress settings for the function, controlling
 	// what traffic can reach it.
-	//
 	// Possible values:
 	//   "INGRESS_SETTINGS_UNSPECIFIED" - Unspecified.
 	//   "ALLOW_ALL" - Allow HTTP traffic from public and private sources.
@@ -81,7 +80,7 @@ type DeployConfig struct {
 	// Cannot be used with TriggerHTTP.
 	EventTrigger *eventTrigger `hcl:"event_trigger,block"`
 
-	// Labels: Labels associated with this Cloud Function.
+	// Labels associated with this Cloud Function.
 	Labels map[string]string `hcl:"labels,optional"`
 
 	// Network: The VPC Network that this cloud function can connect to. It
@@ -108,7 +107,6 @@ type DeployConfig struct {
 
 	// VpcConnectorEgressSettings: The egress settings for the connector,
 	// controlling what traffic is diverted through it.
-	//
 	// Possible values:
 	//   "VPC_CONNECTOR_EGRESS_SETTINGS_UNSPECIFIED" - Unspecified.
 	//   "PRIVATE_RANGES_ONLY" - Use the VPC Access Connector only for
