@@ -73,8 +73,13 @@ type DeployConfig struct {
 
 	// TriggerHTTP allows any HTTP request (of a supported type) to the
 	// endpoint to trigger function execution.
-	// Cannot be used with trigger_bucket and trigger_topic.
-	TriggerHTTP bool `hcl:"trigger_http"`
+	// Cannot be used with EventTrigger.
+	TriggerHTTP triggerHTTP `hcl:"trigger_http,optional"`
+
+	// EventTrigger is  the source that fires events in response to a condition
+	// in another service.
+	// Cannot be used with TriggerHTTP.
+	EventTrigger *eventTrigger `hcl:"event_trigger,block"`
 
 	// Labels: Labels associated with this Cloud Function.
 	Labels map[string]string `hcl:"labels,optional"`
@@ -113,6 +118,86 @@ type DeployConfig struct {
 	VpcConnectorEgressSettings string `hcl:"vpc_connector_egress_settings,optional"`
 }
 
+type eventTrigger struct {
+	// EventType: Required. The type of event to observe. For example:
+	// `providers/cloud.storage/eventTypes/object.change` and
+	// `providers/cloud.pubsub/eventTypes/topic.publish`. Event types match
+	// pattern `providers/*/eventTypes/*.*`. The pattern contains:
+	// 	1. namespace: For example, `cloud.storage` and `google.firebase.analytics`.
+	// 	2. resource type: The type of resource on which event occurs.
+	// 	For example, the Google Cloud Storage API includes the type `object`.
+	// 	3. action: The action that generates the event.
+	// 	For example, action for a Google Cloud Storage Object is 'change'.
+	// 	These parts are lower case.
+	EventType string `hcl:"event_type"`
+
+	// Resource: Required. The resource(s) from which to observe events, for
+	// example, `projects/project-name/buckets/myBucket`.
+	// Not all syntactically correct values are accepted by all services.
+	// For example:
+	// 	1. The authorization model must support it. Google Cloud Functions only
+	//  allows EventTriggers to be deployed that observe resources in the
+	//  same project as the `CloudFunction`.
+	// 	2. The resource type must match  the pattern expected for an `event_type`.
+	// 	For example, an `EventTrigger` that has an `event_type` of
+	// 	"google.pubsub.topic.publish" should have a resource that matches
+	// 	Google Cloud Pub/Sub topics.
+	// Additionally, some services may support short names when creating an `EventTrigger`.
+	// These will always be  returned in the normalized "long" format. See each *service's*
+	// documentation for supported formats.
+	Resource string `hcl:"resource"`
+
+	// FailurePolicy: Specifies policy for failed executions.
+	FailurePolicy failurePolicy `hcl:"failure_policy,block"`
+
+	// Service: The hostname of the service that should be observed. If no
+	// string is provided, the default service implementing the API will be
+	// used. For example, `storage.googleapis.com` is the default for all
+	// event types in the `google.storage` namespace.
+	Service string `hcl:"service,optional"`
+}
+
+func (t *eventTrigger) toCF() *cloudfunctions.EventTrigger {
+	if t == nil {
+		return nil
+	}
+
+	return &cloudfunctions.EventTrigger{
+		EventType:     t.EventType,
+		FailurePolicy: t.FailurePolicy.toCF(),
+		Resource:      t.Resource,
+		Service:       t.Service,
+	}
+}
+
+type failurePolicy struct {
+	// Retry: Describes the retry policy in case of function's execution
+	// failure. A function execution will be retried on any failure. A
+	// failed execution will be retried up to 7 days with an exponential
+	// backoff (capped at 10 seconds). Retried execution is charged as any
+	// other execution.
+	Retry bool `hcl:"retry"`
+}
+
+func (p *failurePolicy) toCF() *cloudfunctions.FailurePolicy {
+	if p == nil || !p.Retry {
+		return nil
+	}
+
+	return &cloudfunctions.FailurePolicy{Retry: &cloudfunctions.Retry{}}
+}
+
+type triggerHTTP bool
+
+// toCF returns the data in the format expected by the cloudfunctions.Service.
+func (t triggerHTTP) toCF() *cloudfunctions.HttpsTrigger {
+	if !t {
+		return nil
+	}
+
+	return &cloudfunctions.HttpsTrigger{}
+}
+
 type Platform struct {
 	config DeployConfig
 }
@@ -131,7 +216,9 @@ func (p *Platform) ConfigSet(config interface{}) error {
 	}
 
 	// validate the config
-	_ = c
+	if c.TriggerHTTP && c.EventTrigger != nil {
+		return fmt.Errorf("trigger_http and event_type cannot be used together")
+	}
 
 	return nil
 }
@@ -216,19 +303,14 @@ func (p *Platform) deploy(
 	var op *cloudfunctions.Operation
 
 	if create {
-		var httpsTrigger *cloudfunctions.HttpsTrigger
-		if p.config.TriggerHTTP {
-			httpsTrigger = &cloudfunctions.HttpsTrigger{}
-		}
-
 		cloudFuncReq := cloudfunctions.CloudFunction{
 			AvailableMemoryMb:          p.config.AvailableMemoryMB,
 			BuildEnvironmentVariables:  p.config.BuildEnvironmentVariables,
 			Description:                p.config.Description,
 			EntryPoint:                 p.config.EntryPoint,
 			EnvironmentVariables:       p.config.EnvironmentVariables,
-			EventTrigger:               nil,
-			HttpsTrigger:               httpsTrigger,
+			EventTrigger:               p.config.EventTrigger.toCF(),
+			HttpsTrigger:               p.config.TriggerHTTP.toCF(),
 			IngressSettings:            p.config.IngressSettings,
 			Labels:                     p.config.Labels,
 			MaxInstances:               p.config.MaxInstances,
@@ -260,7 +342,6 @@ func (p *Platform) deploy(
 		}
 	}
 
-	st.Step(terminal.StatusOK, "Google Cloud Function deployed")
 	st.Update("Building Function '" + op.Name + "'")
 
 	op, err = cloudfunctionsutil.WaitForOperation(ctx, cloudfunctionsService, op)
@@ -285,7 +366,12 @@ func (p *Platform) deploy(
 
 	st.Step(terminal.StatusOK, fmt.Sprintf("Google Cloud Function successfully deployed 'v%d'", versionID))
 
-	return &Deployment{Name: cfresp.Name, Version: versionID, Url: cfresp.HttpsTrigger.Url}, nil
+	var url string
+	if t := cfresp.HttpsTrigger; t != nil {
+		url = t.Url
+	}
+
+	return &Deployment{Name: cfresp.Name, Version: versionID, Url: url}, nil
 }
 
 func createFunction(
