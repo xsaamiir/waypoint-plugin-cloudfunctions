@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/hashicorp/waypoint-plugin-sdk/component"
 	"github.com/hashicorp/waypoint-plugin-sdk/terminal"
@@ -297,14 +296,15 @@ func (p *Platform) deploy(
 		return nil, err
 	}
 
+	st.Update("Checking if function already exists " + functionName + "'")
+
 	// We need to determine if we're creating or updating a function. To
 	// do this, we just query GCP directly.
 	create := false
 	getCall := cloudfunctionsService.Projects.Locations.Functions.Get(functionName).Context(ctx)
 
-	st.Update("Checking if function already exists " + functionName + "'")
-
 	var gerr *googleapi.Error
+
 	cf, err := getCall.Do()
 	if err != nil {
 		if errors.As(err, &gerr) && gerr.Code == 404 {
@@ -315,34 +315,28 @@ func (p *Platform) deploy(
 		}
 	}
 
-	if create {
-		st.Step(terminal.StatusOK, "Google Cloud Function does not exist, creating function")
-	} else {
-		st.Step(terminal.StatusOK, "Google Cloud Function already exists, updating function")
-	}
-
 	var op *cloudfunctions.Operation
 
 	if create {
+		st.Step(terminal.StatusOK, "Google Cloud Function does not exist, creating function")
+
 		cf := p.config.toCF()
 		cf.Name = functionName
 		cf.SourceUploadUrl = artifact.Source
 
 		op, err = createFunction(ctx, cloudfunctionsService, project, location, cf)
-		if err != nil {
-			st.Step(terminal.StatusError, fmt.Sprintf("%#v", *err.(*googleapi.Error)))
-			time.Sleep(15 * time.Second)
-			return nil, err
-		}
 	} else {
+		st.Step(terminal.StatusOK, "Google Cloud Function already exists, updating function")
+
 		// TODO: handle any other updated fields passed as parameters to waypoint.
 		cf.SourceUploadUrl = artifact.Source
 
 		op, err = patchFunc(ctx, cloudfunctionsService, cf)
-		if err != nil {
-			st.Step(terminal.StatusError, fmt.Sprintf("Error updating function: %#v", *err.(*googleapi.Error)))
-			return nil, err
-		}
+	}
+
+	if err != nil {
+		st.Step(terminal.StatusError, "Error deploying function")
+		return nil, err
 	}
 
 	st.Update("Building Function '" + op.Name + "'")
