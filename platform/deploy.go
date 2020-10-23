@@ -116,6 +116,29 @@ type DeployConfig struct {
 	VpcConnectorEgressSettings string `hcl:"vpc_connector_egress_settings,optional"`
 }
 
+func (d DeployConfig) toCF() *cloudfunctions.CloudFunction {
+	return &cloudfunctions.CloudFunction{
+		AvailableMemoryMb:          d.AvailableMemoryMB,
+		BuildEnvironmentVariables:  d.BuildEnvironmentVariables,
+		Description:                d.Description,
+		EntryPoint:                 d.EntryPoint,
+		EnvironmentVariables:       d.EnvironmentVariables,
+		EventTrigger:               d.EventTrigger.toCF(),
+		HttpsTrigger:               d.TriggerHTTP.toCF(),
+		IngressSettings:            d.IngressSettings,
+		Labels:                     d.Labels,
+		MaxInstances:               d.MaxInstances,
+		Network:                    d.Network,
+		Runtime:                    d.Runtime,
+		ServiceAccountEmail:        "",
+		SourceArchiveUrl:           "",
+		SourceRepository:           nil,
+		Timeout:                    d.Timeout,
+		VpcConnector:               d.VpcConnector,
+		VpcConnectorEgressSettings: d.VpcConnectorEgressSettings,
+	}
+}
+
 type eventTrigger struct {
 	// EventType: Required. The type of event to observe. For example:
 	// `providers/cloud.storage/eventTypes/object.change` and
@@ -301,30 +324,11 @@ func (p *Platform) deploy(
 	var op *cloudfunctions.Operation
 
 	if create {
-		cloudFuncReq := cloudfunctions.CloudFunction{
-			AvailableMemoryMb:          p.config.AvailableMemoryMB,
-			BuildEnvironmentVariables:  p.config.BuildEnvironmentVariables,
-			Description:                p.config.Description,
-			EntryPoint:                 p.config.EntryPoint,
-			EnvironmentVariables:       p.config.EnvironmentVariables,
-			EventTrigger:               p.config.EventTrigger.toCF(),
-			HttpsTrigger:               p.config.TriggerHTTP.toCF(),
-			IngressSettings:            p.config.IngressSettings,
-			Labels:                     p.config.Labels,
-			MaxInstances:               p.config.MaxInstances,
-			Name:                       functionName,
-			Network:                    p.config.Network,
-			Runtime:                    p.config.Runtime,
-			ServiceAccountEmail:        "",
-			SourceArchiveUrl:           "",
-			SourceRepository:           nil,
-			SourceUploadUrl:            artifact.Source,
-			Timeout:                    p.config.Timeout,
-			VpcConnector:               p.config.VpcConnector,
-			VpcConnectorEgressSettings: p.config.VpcConnectorEgressSettings,
-		}
+		cf := p.config.toCF()
+		cf.Name = functionName
+		cf.SourceUploadUrl = artifact.Source
 
-		op, err = createFunction(ctx, cloudfunctionsService, project, location, &cloudFuncReq)
+		op, err = createFunction(ctx, cloudfunctionsService, project, location, cf)
 		if err != nil {
 			st.Step(terminal.StatusError, fmt.Sprintf("%#v", *err.(*googleapi.Error)))
 			time.Sleep(15 * time.Second)
@@ -333,6 +337,7 @@ func (p *Platform) deploy(
 	} else {
 		// TODO: handle any other updated fields passed as parameters to waypoint.
 		cf.SourceUploadUrl = artifact.Source
+
 		op, err = patchFunc(ctx, cloudfunctionsService, cf)
 		if err != nil {
 			st.Step(terminal.StatusError, fmt.Sprintf("Error updating function: %#v", *err.(*googleapi.Error)))
