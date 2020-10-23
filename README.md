@@ -22,6 +22,7 @@ use case goes. Please open an issue for feedback, issues or feature requests.
 To install the plugin, run the following command:
 
 ````bash
+# First install the plugin archive by following the instuction here: https://github.com/sharkyze/waypoint-plugin-archive
 git clone git@github.com:sharkyze/waypoint-plugin-cloudfunctions.git # or gh repo clone sharkyze/waypoint-plugin-cloudfunctions
 cd waypoint-plugin-cloudfunctions
 make install
