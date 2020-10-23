@@ -21,10 +21,6 @@ type RegistryConfig struct {
 	// Location	represents the Google Cloud location where the application
 	// will be deployed, e.g. us-west1.
 	Location string `hcl:"location,attr"`
-
-	// Unauthenticated, if set to true, will allow unauthenticated access
-	// to your deployment. This defaults to true.
-	Unauthenticated *bool `hcl:"unauthenticated,optional"`
 }
 
 type Registry struct {

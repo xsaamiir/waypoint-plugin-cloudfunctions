@@ -4,7 +4,18 @@ waypoint-plugin-cloudfunctions is a deploy (registry, platform & release) plugin
 for [Waypoint](https://github.com/hashicorp/waypoint). It allows you to stage previously built zip artifcats to Google
 Cloud Functions and then release the staged deployment and open it to general traffic.
 
-**This plugin is still work in progress, please open an issue for any feedback or issues.**
+# Status
+
+I am currently using this plugin to deploy several Google Cloud Functions in production. It is working fine as far as my
+use case goes. Please open an issue for feedback, issues or feature requests.
+
+## Current Limitation
+
+- The plugin doesn't support staging deployments before releasing them to general traffic, this is mainly because I
+  haven't found a way to support this using Cloud Functions. This means that the plugin does almost nothing in
+  the `release` stage expect setting the IAM policy for unauthenticated functions.
+- `Destroy` is not supported for `build` nor `release` for the same reason mentioned above. The only way I was able to
+  implement this was by deleting the function, which is not what most people would want I think.
 
 # Install
 
@@ -23,7 +34,11 @@ the [Google Cloud Run tutorial](https://learn.hashicorp.com/tutorials/waypoint/g
 . This plugin uses GCP Application Default Credentials (ADC) for authentication. More
 info [here](https://cloud.google.com/docs/authentication/production).
 
-# Configure
+# Documentation
+
+The documentation of the plugin is [here](./doc/README.md)
+
+# Example
 
 ```hcl
 project = "examples"
