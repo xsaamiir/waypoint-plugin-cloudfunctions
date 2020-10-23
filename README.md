@@ -55,7 +55,9 @@ app "helloworld" {
   }
 
   release {
-    use "cloudfunctions" {}
+    use "cloudfunctions" {
+      unauthenticated = true
+    }
   }
 }
 ```
