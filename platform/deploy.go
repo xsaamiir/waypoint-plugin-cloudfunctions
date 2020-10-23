@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/api/cloudfunctions/v1"
 	"google.golang.org/api/googleapi"
 
+	"github.com/sharkyze/waypoint-plugin-cloudfunctions/internal/cloudfunctionsutil"
 	"github.com/sharkyze/waypoint-plugin-cloudfunctions/registry"
 )
 
@@ -109,10 +111,6 @@ type DeployConfig struct {
 	//   "ALL_TRAFFIC" - Force the use of VPC Access Connector for all
 	// egress traffic from the function.
 	VpcConnectorEgressSettings string `hcl:"vpc_connector_egress_settings,optional"`
-
-	// Unauthenticated, if set to true, will allow unauthenticated access
-	// to your deployment. This defaults to false.
-	Unauthenticated *bool `hcl:"unauthenticated,optional"`
 }
 
 type Platform struct {
@@ -204,14 +202,15 @@ func (p *Platform) deploy(
 		if errors.As(err, &gerr) && gerr.Code == 404 {
 			create = true
 		} else {
+			st.Step(terminal.StatusError, "Error fetching function")
 			return nil, err
 		}
 	}
 
 	if create {
-		st.Update("Google Cloud Function does not exist, creating function")
+		st.Step(terminal.StatusOK, "Google Cloud Function does not exist, creating function")
 	} else {
-		st.Update("Google Cloud Function already exists, updating function")
+		st.Step(terminal.StatusOK, "Google Cloud Function already exists, updating function")
 	}
 
 	var op *cloudfunctions.Operation
@@ -252,6 +251,7 @@ func (p *Platform) deploy(
 			return nil, err
 		}
 	} else {
+		// TODO: handle any other updated fields passed as parameters to waypoint.
 		cf.SourceUploadUrl = artifact.Source
 		op, err = patchFunc(ctx, cloudfunctionsService, cf)
 		if err != nil {
@@ -263,7 +263,7 @@ func (p *Platform) deploy(
 	st.Step(terminal.StatusOK, "Google Cloud Function deployed")
 	st.Update("Building Function '" + op.Name + "'")
 
-	op, err = waitForOperation(ctx, cloudfunctionsService, op)
+	op, err = cloudfunctionsutil.WaitForOperation(ctx, cloudfunctionsService, op)
 	if err != nil {
 		st.Step(terminal.StatusError, "Error fetching build status")
 		return nil, err
@@ -274,9 +274,18 @@ func (p *Platform) deploy(
 		return nil, errors.New(op.Error.Message)
 	}
 
-	st.Step(terminal.StatusOK, "Google Cloud Function deployed")
+	var cfresp cloudfunctions.CloudFunction
+	err = json.Unmarshal(op.Response, &cfresp)
+	if err != nil {
+		st.Step(terminal.StatusError, "Error reading the response data but function successfully deployed")
+		return nil, err
+	}
 
-	return &Deployment{}, nil
+	versionID := cfresp.VersionId
+
+	st.Step(terminal.StatusOK, fmt.Sprintf("Google Cloud Function successfully deployed 'v%d'", versionID))
+
+	return &Deployment{Name: cfresp.Name, Version: versionID, Url: cfresp.HttpsTrigger.Url}, nil
 }
 
 func createFunction(
@@ -313,29 +322,6 @@ func patchFunc(
 	op, err := patchCall.Do()
 	if err != nil {
 		return nil, err
-	}
-
-	return op, nil
-}
-
-// waitForOperation keeps polling long the operation until it finishes either
-// successfully or with an error.
-func waitForOperation(
-	ctx context.Context,
-	service *cloudfunctions.Service,
-	op *cloudfunctions.Operation,
-) (*cloudfunctions.Operation, error) {
-	var err error
-
-	for !op.Done {
-		opCall := service.Operations.Get(op.Name)
-		opCall = opCall.Context(ctx)
-		op, err = opCall.Do()
-		if err != nil {
-			return nil, err
-		}
-
-		time.Sleep(1 * time.Second)
 	}
 
 	return op, nil
