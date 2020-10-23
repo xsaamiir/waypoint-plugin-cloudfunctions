@@ -5,22 +5,27 @@ import (
 	"fmt"
 
 	"github.com/hashicorp/waypoint-plugin-sdk/terminal"
+	"google.golang.org/api/cloudfunctions/v1"
+
+	"github.com/sharkyze/waypoint-plugin-cloudfunctions/platform"
 )
 
 type ReleaseConfig struct {
-	Active bool "hcl:directory,optional"
+	// Unauthenticated, if set to true, will allow unauthenticated access
+	// to your deployment. This defaults to false.
+	Unauthenticated bool `hcl:"unauthenticated,optional"`
 }
 
 type ReleaseManager struct {
 	config ReleaseConfig
 }
 
-// Implement Configurable
-func (rm *ReleaseManager) Config() interface{} {
-	return &rm.config
+// Config implements component.Configurable.
+func (rm *ReleaseManager) Config() (interface{}, error) {
+	return &rm.config, nil
 }
 
-// Implement ConfigurableNotify
+// ConfigSet implements component.ConfigurableNotify.
 func (rm *ReleaseManager) ConfigSet(config interface{}) error {
 	_, ok := config.(*ReleaseConfig)
 	if !ok {
@@ -33,7 +38,7 @@ func (rm *ReleaseManager) ConfigSet(config interface{}) error {
 	return nil
 }
 
-// Implement Builder
+// ReleaseFunc implements component.Builder.
 func (rm *ReleaseManager) ReleaseFunc() interface{} {
 	// return a function which will be called by Waypoint
 	return rm.release
@@ -66,10 +71,73 @@ func (rm *ReleaseManager) ReleaseFunc() interface{} {
 //
 // If an error is returned, Waypoint stops the execution flow and
 // returns an error to the user.
-func (rm *ReleaseManager) release(ctx context.Context, ui terminal.UI) (*Release, error) {
-	u := ui.Status()
-	defer u.Close()
-	u.Update("Release application")
+func (rm *ReleaseManager) release(
+	ctx context.Context,
+	ui terminal.UI,
+	deployment *platform.Deployment,
+) (*Release, error) {
+	st := ui.Status()
+	defer st.Close()
 
-	return &Release{}, nil
+	release := Release{
+		Version: deployment.Version,
+		Name:    deployment.Name,
+		Url:     deployment.Url,
+	}
+
+	// TODO: handle cases where the parameter has changed
+	// 	from Authenticated to Unauthenticated ?
+	if !rm.config.Unauthenticated {
+		st.Step(
+			terminal.StatusOK,
+			"No Operation release, Cloud Function already deployed but only accessible to authenticated users",
+		)
+		return &release, nil
+	}
+
+	st.Update("Releasing Google Cloud Function to all unauthenticated users")
+
+	cloudfunctionsService, err := cloudfunctions.NewService(ctx)
+	if err != nil {
+		st.Step(terminal.StatusError, "Error setting IAM Policy to allUsers")
+		return nil, err
+	}
+
+	err = setIAMPolicyAllUsers(ctx, cloudfunctionsService, release.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	st.Step(terminal.StatusOK, "IAM Policy successfully set to 'allUsers'")
+
+	return &release, nil
 }
+
+// setIAMPolicyAllUsers sets the IAM policy on the deployment so that anyone
+// can access it (no auth required).
+func setIAMPolicyAllUsers(
+	ctx context.Context,
+	service *cloudfunctions.Service,
+	name string,
+) error {
+	policyRequest := cloudfunctions.SetIamPolicyRequest{
+		Policy: &cloudfunctions.Policy{
+			Bindings: []*cloudfunctions.Binding{
+				{
+					Role:    "roles/cloudfunctions.invoker",
+					Members: []string{"allUsers"},
+				},
+			},
+		},
+	}
+
+	_, err := service.Projects.Locations.Functions.SetIamPolicy(name, &policyRequest).Context(ctx).Do()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// URL implements component.Release.
+func (x *Release) URL() string { return x.Url }
